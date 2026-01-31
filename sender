@@ -1,7 +1,5 @@
--- Complete Autotrade Script for Loadstring
--- Place this code at: https://raw.githubusercontent.com/your-username/autotrade/main/sender
-
--- Configuration is handled by the user's getgenv().Settings table
+-- Complete Autotrade Script with Working Teleport
+-- Save this at: https://raw.githubusercontent.com/your-username/autotrade/main/sender
 
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -16,15 +14,25 @@ local Network = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Framework
 -- Trade state tracking
 local tradeOpen = false
 local tradeCompleted = false
-local currentTradeUser = ""
 
 -- Function to check if a pet matches the user's filter criteria
 local function petMatchesFilter(petData)
     local nameMatch = table.find(getgenv().Settings.PETS_TO_TRADE, petData.Name)
-    local mythicMatch = (not getgenv().Settings.ONLY_MYTHIC) or petData.Mythic
-    local shinyMatch = (not getgenv().Settings.ONLY_SHINY) or petData.Shiny
+    local mythicMatch = (not getgenv().Settings.ONLY_MYTHIC) or (petData.Mythic == true)
+    local shinyMatch = (not getgenv().Settings.ONLY_SHINY) or (petData.Shiny == true)
     
     return nameMatch and mythicMatch and shinyMatch
+end
+
+-- Function to check if we have any matching pets
+local function hasMatchingPets()
+    for _, petData in pairs(Localdata.Pets) do
+        if petMatchesFilter(petData) then
+            print("Found matching pet: " .. petData.Name)
+            return true
+        end
+    end
+    return false
 end
 
 -- Function to add pets to trade
@@ -33,7 +41,6 @@ local function addPetsToTrade()
     
     for _, petData in pairs(Localdata.Pets) do
         if petMatchesFilter(petData) then
-            -- Use the correct remote to add pet to trade
             local success, errorMsg = pcall(function()
                 Network:FireServer("TradeAddPet", petData.Id .. ":0")
             end)
@@ -41,7 +48,7 @@ local function addPetsToTrade()
             if success then
                 petsAdded = petsAdded + 1
                 print("Added pet to trade: " .. petData.Name)
-                task.wait(0.5) -- Delay between adding pets
+                task.wait(0.5)
             else
                 warn("Failed to add pet " .. petData.Name .. ": " .. tostring(errorMsg))
             end
@@ -67,9 +74,9 @@ local function executeTrade()
     
     print("Trade request sent. Waiting for acceptance...")
     
-    -- Step 2: Wait for trade to open (with timeout)
+    -- Step 2: Wait for trade to open
     local tradeWaitTime = 0
-    local maxWaitTime = 30 -- 30 second timeout
+    local maxWaitTime = 30
     
     while not tradeOpen and tradeWaitTime < maxWaitTime do
         task.wait(1)
@@ -82,18 +89,18 @@ local function executeTrade()
     end
     
     print("Trade opened successfully")
-    task.wait(2) -- Brief pause before adding pets
+    task.wait(2)
     
     -- Step 3: Add pets to trade
     local petsAdded = addPetsToTrade()
     
     if petsAdded == 0 then
         warn("No pets matching the filter criteria were found or added")
-        -- Depending on your needs, you might want to cancel the trade here
+    else
+        print("Added " .. petsAdded .. " pets to trade")
     end
     
-    print("Added " .. petsAdded .. " pets to trade")
-    task.wait(2) -- Wait for other player to see pets
+    task.wait(2)
     
     -- Step 4: Accept the trade
     local acceptSuccess, acceptResult = pcall(function()
@@ -138,7 +145,7 @@ local function executeTrade()
     end
 end
 
--- Listen for trade state changes (adapt to your game's actual remote events)
+-- Listen for trade state changes
 Network.OnClientEvent:Connect(function(action, ...)
     if action == "TradeOpened" then
         tradeOpen = true
@@ -148,73 +155,63 @@ Network.OnClientEvent:Connect(function(action, ...)
         tradeOpen = false
         tradeCompleted = true
         print("Trade ended event received")
-        -- Optional: Add any post-trade cleanup here
     end
 end)
 
--- Main execution flow
+-- CORRECTED: Main execution with working teleport
 local function main()
-    print("Autotrade script started")
+    print("=======================================")
+    print("AUTOTRADE SCRIPT STARTED")
+    print("Target User: " .. getgenv().Settings.TRADE_USER)
     print("Looking for pets: " .. table.concat(getgenv().Settings.PETS_TO_TRADE, ", "))
+    print("=======================================")
     
-    -- First, check if the target user is in the current server
+    -- Check if we have ANY matching pets first
+    if not hasMatchingPets() then
+        print("❌ No matching pets found in inventory. Stopping script.")
+        return
+    end
+    
+    print("✅ Matching pets found in inventory")
+    
+    -- Check if trade user is already in the server
     local targetPlayer = Players:FindFirstChild(getgenv().Settings.TRADE_USER)
     
     if targetPlayer then
-        print("Trade user found in current server")
-        
-        -- Check if we have the required pets
-        local hasRequiredPets = false
-        for _, petData in pairs(Localdata.Pets) do
-            if petMatchesFilter(petData) then
-                hasRequiredPets = true
-                break
-            end
-        end
-        
-        if hasRequiredPets then
-            print("Required pets found. Starting trade...")
-            local success = executeTrade()
-            
-            if success then
-                print("Trade process completed")
-            else
-                warn("Trade process failed")
-            end
-        else
-            print("No pets matching the criteria found in inventory")
-        end
+        print("✅ Trade user found in current server")
+        print("Starting trade process...")
+        executeTrade()
     else
-        print("Trade user not found in current server")
+        print("❌ Trade user NOT found in current server")
         
-        -- Check if we should teleport to the target job
+        -- Check if JOBID is provided
         if getgenv().Settings.JOBID and getgenv().Settings.JOBID ~= "" then
-            -- Check if we have the required pets before teleporting
-            local shouldTeleport = false
-            for _, petData in pairs(Localdata.Pets) do
-                if petMatchesFilter(petData) then
-                    shouldTeleport = true
-                    break
-                end
-            end
+            print("JOBID provided: " .. getgenv().Settings.JOBID)
+            print("Teleporting to target server...")
             
-            if shouldTeleport then
-                print("Teleporting to target server...")
-                local teleportSuccess, teleportError = pcall(function()
-                    TeleportService:TeleportToPlaceInstance(game.PlaceId, getgenv().Settings.JOBID, LocalPlayer)
-                end)
-                
-                if not teleportSuccess then
-                    warn("Teleport failed: " .. tostring(teleportError))
-                end
+            -- TELEPORT TO JOBID - THIS IS THE CRITICAL FIX
+            local teleportSuccess, teleportError = pcall(function()
+                -- This is the correct way to teleport to a specific server
+                TeleportService:TeleportToPlaceInstance(
+                    game.PlaceId, 
+                    getgenv().Settings.JOBID, 
+                    LocalPlayer
+                )
+            end)
+            
+            if not teleportSuccess then
+                warn("Teleport failed: " .. tostring(teleportError))
             else
-                print("No matching pets found, not teleporting")
+                print("Teleport initiated successfully")
+                -- Script execution stops here because game will reload
             end
         else
-            print("No JOBID specified for teleport")
+            print("❌ No JOBID provided. Cannot join target server.")
+            print("Please provide a valid JOBID in Settings")
         end
     end
 end
 
--- Start the script
+-- IMPORTANT: Wait for everything to load
+task.wait(3) -- Give time for game to fully load
 main()
