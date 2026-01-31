@@ -1,107 +1,220 @@
-loadstring([[
+-- Complete Autotrade Script for Loadstring
+-- Place this code at: https://raw.githubusercontent.com/your-username/autotrade/main/sender
+
+-- Configuration is handled by the user's getgenv().Settings table
+
+-- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
-local LocalPlayer = game.Players.LocalPlayer
 local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 
--- Wait for game to load
-repeat task.wait() until ReplicatedStorage:FindFirstChild("LocalData")
-repeat task.wait() until ReplicatedStorage.Shared.Framework.Network.Remote:FindFirstChild("RemoteEvent")
-
+-- Game-specific references (verify these paths match your game)
 local Localdata = require(ReplicatedStorage:WaitForChild("LocalData"))
-local Remote = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+local Network = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("RemoteEvent")
 
--- Check if settings exist
-if not getgenv().Settings then
-    error("Settings not found. Please set getgenv().Settings first!")
-    return
+-- Trade state tracking
+local tradeOpen = false
+local tradeCompleted = false
+local currentTradeUser = ""
+
+-- Function to check if a pet matches the user's filter criteria
+local function petMatchesFilter(petData)
+    local nameMatch = table.find(getgenv().Settings.PETS_TO_TRADE, petData.Name)
+    local mythicMatch = (not getgenv().Settings.ONLY_MYTHIC) or petData.Mythic
+    local shinyMatch = (not getgenv().Settings.ONLY_SHINY) or petData.Shiny
+    
+    return nameMatch and mythicMatch and shinyMatch
 end
 
-local Settings = getgenv().Settings
+-- Function to add pets to trade
+local function addPetsToTrade()
+    local petsAdded = 0
+    
+    for _, petData in pairs(Localdata.Pets) do
+        if petMatchesFilter(petData) then
+            -- Use the correct remote to add pet to trade
+            local success, errorMsg = pcall(function()
+                Network:FireServer("TradeAddPet", petData.Id .. ":0")
+            end)
+            
+            if success then
+                petsAdded = petsAdded + 1
+                print("Added pet to trade: " .. petData.Name)
+                task.wait(0.5) -- Delay between adding pets
+            else
+                warn("Failed to add pet " .. petData.Name .. ": " .. tostring(errorMsg))
+            end
+        end
+    end
+    
+    return petsAdded
+end
 
-local tradeOpen = false
+-- Main trading process
+local function executeTrade()
+    print("Starting trade process with user: " .. getgenv().Settings.TRADE_USER)
+    
+    -- Step 1: Send trade request
+    local requestSuccess, requestResult = pcall(function()
+        Network:FireServer("TradeRequest", getgenv().Settings.TRADE_USER)
+    end)
+    
+    if not requestSuccess then
+        warn("Failed to send trade request: " .. tostring(requestResult))
+        return false
+    end
+    
+    print("Trade request sent. Waiting for acceptance...")
+    
+    -- Step 2: Wait for trade to open (with timeout)
+    local tradeWaitTime = 0
+    local maxWaitTime = 30 -- 30 second timeout
+    
+    while not tradeOpen and tradeWaitTime < maxWaitTime do
+        task.wait(1)
+        tradeWaitTime = tradeWaitTime + 1
+    end
+    
+    if not tradeOpen then
+        warn("Trade did not open within timeout period")
+        return false
+    end
+    
+    print("Trade opened successfully")
+    task.wait(2) -- Brief pause before adding pets
+    
+    -- Step 3: Add pets to trade
+    local petsAdded = addPetsToTrade()
+    
+    if petsAdded == 0 then
+        warn("No pets matching the filter criteria were found or added")
+        -- Depending on your needs, you might want to cancel the trade here
+    end
+    
+    print("Added " .. petsAdded .. " pets to trade")
+    task.wait(2) -- Wait for other player to see pets
+    
+    -- Step 4: Accept the trade
+    local acceptSuccess, acceptResult = pcall(function()
+        Network:FireServer("TradeAccept")
+    end)
+    
+    if not acceptSuccess then
+        warn("Failed to accept trade: " .. tostring(acceptResult))
+        return false
+    end
+    
+    print("Trade accepted. Waiting for confirmation...")
+    task.wait(3)
+    
+    -- Step 5: Confirm the trade
+    local confirmSuccess, confirmResult = pcall(function()
+        Network:FireServer("TradeConfirm")
+    end)
+    
+    if not confirmSuccess then
+        warn("Failed to confirm trade: " .. tostring(confirmResult))
+        return false
+    end
+    
+    print("Trade confirmed. Waiting for completion...")
+    
+    -- Step 6: Wait for trade completion
+    local completeWaitTime = 0
+    local maxCompleteWait = 15
+    
+    while not tradeCompleted and completeWaitTime < maxCompleteWait do
+        task.wait(1)
+        completeWaitTime = completeWaitTime + 1
+    end
+    
+    if tradeCompleted then
+        print("Trade completed successfully!")
+        return true
+    else
+        warn("Trade completion not detected within timeout")
+        return false
+    end
+end
 
-Remote.OnClientEvent:Connect(function(action)
+-- Listen for trade state changes (adapt to your game's actual remote events)
+Network.OnClientEvent:Connect(function(action, ...)
     if action == "TradeOpened" then
         tradeOpen = true
-        print("Trade opened")
+        tradeCompleted = false
+        print("Trade opened event received")
     elseif action == "TradeEnded" then
         tradeOpen = false
-        print("Trade completed")
-        LocalPlayer:Kick("Trade complete")
+        tradeCompleted = true
+        print("Trade ended event received")
+        -- Optional: Add any post-trade cleanup here
     end
 end)
 
-function processTrade()
-    Remote:FireServer("TradeRequest", Settings.TRADE_USER)
-    print("Trade request sent to", Settings.TRADE_USER)
-
-    local waitTime = 0
-    while not tradeOpen and waitTime < 30 do
-        task.wait(0.5)
-        waitTime = waitTime + 0.5
-    end
-
-    if not tradeOpen then
-        print("Trade did not open")
-        return
-    end
-
-    task.wait(1)
-
-    for _, p in pairs(Localdata.Pets) do
-        if table.find(Settings.PETS_TO_TRADE, p.Name)
-        and (not Settings.ONLY_MYTHIC or p.Mythic)
-        and (not Settings.ONLY_SHINY or p.Shiny) then
-            Remote:FireServer("TradeAddPet", p.Id .. ":0")
-            print("Added pet:", p.Name)
-            task.wait(0.5)
+-- Main execution flow
+local function main()
+    print("Autotrade script started")
+    print("Looking for pets: " .. table.concat(getgenv().Settings.PETS_TO_TRADE, ", "))
+    
+    -- First, check if the target user is in the current server
+    local targetPlayer = Players:FindFirstChild(getgenv().Settings.TRADE_USER)
+    
+    if targetPlayer then
+        print("Trade user found in current server")
+        
+        -- Check if we have the required pets
+        local hasRequiredPets = false
+        for _, petData in pairs(Localdata.Pets) do
+            if petMatchesFilter(petData) then
+                hasRequiredPets = true
+                break
+            end
         end
-    end
-
-    task.wait(2)
-
-    Remote:FireServer("TradeAccept")
-    print("Trade accepted")
-
-    task.wait(3)
-
-    Remote:FireServer("TradeConfirm")
-    print("Trade confirmed")
-end
-
-if Settings.TRADE_USER == "" then
-    LocalPlayer:Kick("TRADE_USER not set in settings")
-    return
-end
-
-if Players:FindFirstChild(Settings.TRADE_USER) then
-    print("Trade user found:", Settings.TRADE_USER)
-
-    local hasMatch = false
-    for _, p in pairs(Localdata.Pets) do
-        if table.find(Settings.PETS_TO_TRADE, p.Name)
-        and (not Settings.ONLY_MYTHIC or p.Mythic)
-        and (not Settings.ONLY_SHINY or p.Shiny) then
-            hasMatch = true
-            break
-        end
-    end
-
-    if hasMatch then
-        if Settings.JOBID ~= "" then
-            pcall(function()
-                TeleportService:TeleportToPlaceInstance(game.PlaceId, Settings.JOBID, LocalPlayer)
-                task.wait(5)
-                processTrade()
-            end)
+        
+        if hasRequiredPets then
+            print("Required pets found. Starting trade...")
+            local success = executeTrade()
+            
+            if success then
+                print("Trade process completed")
+            else
+                warn("Trade process failed")
+            end
         else
-            processTrade()
+            print("No pets matching the criteria found in inventory")
         end
     else
-        print("No matching pets found for current settings")
+        print("Trade user not found in current server")
+        
+        -- Check if we should teleport to the target job
+        if getgenv().Settings.JOBID and getgenv().Settings.JOBID ~= "" then
+            -- Check if we have the required pets before teleporting
+            local shouldTeleport = false
+            for _, petData in pairs(Localdata.Pets) do
+                if petMatchesFilter(petData) then
+                    shouldTeleport = true
+                    break
+                end
+            end
+            
+            if shouldTeleport then
+                print("Teleporting to target server...")
+                local teleportSuccess, teleportError = pcall(function()
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, getgenv().Settings.JOBID, LocalPlayer)
+                end)
+                
+                if not teleportSuccess then
+                    warn("Teleport failed: " .. tostring(teleportError))
+                end
+            else
+                print("No matching pets found, not teleporting")
+            end
+        else
+            print("No JOBID specified for teleport")
+        end
     end
-else
-    LocalPlayer:Kick("Trade user not found in game: " .. Settings.TRADE_USER)
 end
-]])()
+
+-- Start the script
+main()
