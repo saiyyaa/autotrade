@@ -1,0 +1,105 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TeleportService = game:GetService("TeleportService")
+local LocalPlayer = game.Players.LocalPlayer
+local Players = game:GetService("Players")
+
+-- Wait for game to load
+repeat task.wait() until ReplicatedStorage:FindFirstChild("LocalData")
+repeat task.wait() until ReplicatedStorage.Shared.Framework.Network.Remote:FindFirstChild("RemoteEvent")
+
+local Localdata = require(ReplicatedStorage:WaitForChild("LocalData"))
+local Remote = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+
+-- Check if settings exist
+if not getgenv().Settings then
+    error("Settings not found. Please set getgenv().Settings first!")
+    return
+end
+
+local Settings = getgenv().Settings
+
+local tradeOpen = false
+
+Remote.OnClientEvent:Connect(function(action)
+    if action == "TradeOpened" then
+        tradeOpen = true
+        print("Trade opened")
+    elseif action == "TradeEnded" then
+        tradeOpen = false
+        print("Trade completed")
+        LocalPlayer:Kick("Trade complete")
+    end
+end)
+
+function processTrade()
+    Remote:FireServer("TradeRequest", Settings.TRADE_USER)
+    print("Trade request sent to", Settings.TRADE_USER)
+    
+    local waitTime = 0
+    while not tradeOpen and waitTime < 30 do
+        task.wait(0.5)
+        waitTime = waitTime + 0.5
+    end
+    
+    if not tradeOpen then
+        print("Trade did not open")
+        return
+    end
+    
+    task.wait(1)
+    
+    for _, p in pairs(Localdata.Pets) do
+        if table.find(Settings.PETS_TO_TRADE, p.Name)
+        and (not Settings.ONLY_MYTHIC or p.Mythic)
+        and (not Settings.ONLY_SHINY or p.Shiny) then
+            Remote:FireServer("TradeAddPet", p.Id .. ":0")
+            print("Added pet:", p.Name)
+            task.wait(0.5)
+        end
+    end
+    
+    task.wait(2)
+    
+    Remote:FireServer("TradeAccept")
+    print("Trade accepted")
+    
+    task.wait(3)
+    
+    Remote:FireServer("TradeConfirm")
+    print("Trade confirmed")
+end
+
+if Settings.TRADE_USER == "" then
+    LocalPlayer:Kick("TRADE_USER not set in settings")
+    return
+end
+
+if Players:FindFirstChild(Settings.TRADE_USER) then
+    print("Trade user found:", Settings.TRADE_USER)
+    
+    local hasMatch = false
+    for _, p in pairs(Localdata.Pets) do
+        if table.find(Settings.PETS_TO_TRADE, p.Name)
+        and (not Settings.ONLY_MYTHIC or p.Mythic)
+        and (not Settings.ONLY_SHINY or p.Shiny) then
+            hasMatch = true
+            break
+        end
+    end
+    
+    if hasMatch then
+        if Settings.JOBID ~= "" then
+            pcall(function()
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, Settings.JOBID, LocalPlayer)
+                task.wait(5)
+                processTrade()
+            end)
+        else
+            processTrade()
+        end
+    else
+        print("No matching pets found for current settings")
+    end
+else
+    LocalPlayer:Kick("Trade user not found in game: " .. Settings.TRADE_USER)
+end
