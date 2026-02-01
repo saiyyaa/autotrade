@@ -76,7 +76,7 @@ if #allowedpets > 0 then
 end
 
 remote.OnClientEvent:Connect(function(action)
-    if action == "TradeOpened" then
+    if action == "TradeStarted" then
         print("Trade started")
         tradeopen = true
     elseif action == "TradeEnded" then
