@@ -3,14 +3,20 @@ local server = game:GetService("TeleportService")
 local localdata = require(game:GetService("ReplicatedStorage").Client.Framework.Services.LocalData)
 local data = localdata:Get()
 local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 
 -- Settings and stuffs
+
 local Settings = getgenv().Settings
 local PETS_TO_TRADE = Settings.PETS_TO_TRADE
 local ONLY_MYTHIC = Settings.ONLY_MYTHIC
 local ONLY_SHINY = Settings.ONLY_SHINY
 local JOBID = Settings.JOBID
 local TRADE_USER = Settings.TRADE_USER
+
+local tradeplayer = game.Players:FindFirstChild(TRADE_USER)
+
+
 
 local serverhop = false
 local tradenow = false
@@ -30,7 +36,6 @@ end
 function checkpets()
     getdata()
     table.clear(allowedpets)
-    serverhop = false
 
     if not data.Pets then
         print("No pets found")
@@ -40,21 +45,23 @@ function checkpets()
     for _, pet in pairs(data.Pets) do
         for _, wanted in ipairs(PETS_TO_TRADE) do
             if pet.Name == wanted then
-                table.insert(allowedpets, {
-                    Id = pet.Id,
-                    Name = pet.Name
-                })
-
-                print("allowed pet:", pet.Name, "| ID:", pet.Id)
-                serverhop = true
+                -- Check if pet.Id already has :0 suffix
+                local petId = pet.Id
+                if not string.find(petId, ":0$") then
+                    petId = petId .. ":0"  -- Add :0 if missing
+                end
+                
+                table.insert(allowedpets, petId)  -- Store the full ID with :0
+                print("Found pet:", pet.Name, "| ID:", petId)
                 break
             end
         end
     end
 
-    print("done")
-    return serverhop, eligiblePets
+    print("Total pets to trade:", #allowedpets)
+    return #allowedpets > 0
 end
+
 
 
 if game.JobId == JOBID then
@@ -62,10 +69,10 @@ if game.JobId == JOBID then
     print("alr in server :3")
     tradenow = true
 else
-    TeleportService:TeleportToPlaceInstance(game.PlaceId, JOBID, LocalPlayer)
+    server:TeleportToPlaceInstance(game.PlaceId, JOBID, LocalPlayer)
 end
 
-Network.OnClientEvent:Connect(function(action)
+remote.OnClientEvent:Connect(function(action)
     if action == "TradeOpened" then
         print("Trade started")
         tradeopen = true
@@ -82,17 +89,18 @@ while true do
         print("trading starting")
         task.wait(1)
         if not tradeopen then
-            remote:FireServer("TradeRequest", TRADE_USER)
+            remote:FireServer("TradeRequest", tradeplayer)
             task.wait(10)
-            for _, petid in ipairs(allowedpets) do
-                remote:FireServer("TradeAddPet", petid)
+            for _, petId in ipairs(allowedpets) do  -- Change petData to petId
+                remote:FireServer("TradeAddPet", petId)  -- petId is already the string ID
                 task.wait(1)
+                print("adding pet ID:", petId)  -- Just print the ID
             end
             task.wait(2)
             remote:FireServer("TradeAccept")
             task.wait(10)
             remote:FireServer("TradeConfirm")
-            task.wait(5)
+            task.wait(15)
             game.Players.LocalPlayer:Kick("Pets traded :P")
         end
     elseif tradenow and not Players:FindFirstChild(TRADE_USER) then
